@@ -1,93 +1,82 @@
-#!/usr/bin/env python3
-"""
-clean_data.py
-
-Usage:
-    python clean_data.py input.csv output_clean.csv
-    or
-    python clean_data.py --input-folder ./raw_csvs --output-folder ./cleaned
-"""
-
-import argparse
-from pathlib import Path
 import pandas as pd
-import numpy as np
-import re
+import os
+import sys
 
-def clean_dataframe(df):
-    df.columns = [c.strip().replace(' ', '_').lower() for c in df.columns]
+def clean_data(df):
+    if 'product_id' not in df.columns:
+        df.insert(0, "product_id", range(1, len(df) + 1))
 
-    obj_cols = df.select_dtypes(include=['object']).columns
-    for c in obj_cols:
-        df[c] = df[c].astype(str).str.strip()
-        df[c] = df[c].replace({'': np.nan, 'nan': np.nan, 'N/A': np.nan, 'n/a': np.nan})
+    df['product_name'] = df['product_name'].astype(str).str.strip().str.title()
+    df['category'] = df['category'].astype(str).str.strip().str.title()
 
-    if 'product_name' in df.columns:
-        df['product_name'] = df['product_name'].str.title()
+    df['price'] = df['price'].astype(str).str.replace(r'[^0-9.]', '', regex=True)
+    df['price'] = pd.to_numeric(df['price'], errors='coerce')
 
-    if 'category' in df.columns:
-        df['category'] = df['category'].str.title()
+    df['stock'] = pd.to_numeric(df['stock'], errors='coerce')
 
-    if 'product_id' in df.columns:
-        df['product_id'] = df['product_id'].astype(str).str.strip().str.zfill(3)
-
-    if 'price' in df.columns:
-        df['price'] = df['price'].astype(str).replace(r'(^nan$)|(^None$)', np.nan, regex=True)
-        df['price'] = df['price'].str.replace(r'[^0-9\.\-]', '', regex=True)
-        df['price'] = pd.to_numeric(df['price'], errors='coerce').round(2)
-
-    if 'stock' in df.columns:
-        df['stock'] = df['stock'].astype(str).str.replace(r'[^0-9\-]', '', regex=True)
-        df['stock'] = pd.to_numeric(df['stock'], errors='coerce').fillna(0).astype(int)
-
-    if 'launch_date' in df.columns:
-        df['launch_date'] = pd.to_datetime(df['launch_date'], errors='coerce').dt.date
-
-
-    preferred = ['product_id', 'product_name', 'category', 'price', 'stock', 'launch_date']
-    existing = [c for c in preferred if c in df.columns]
-    others = [c for c in df.columns if c not in existing]
-    df = df[existing + others]
+    df['launch_date'] = pd.to_datetime(df['launch_date'], errors='coerce').dt.strftime('%Y-%m-%d')
 
     return df
 
-def clean_file(input_path, output_csv=None, output_xlsx=None):
-    df = pd.read_csv(input_path, dtype= str)
-    cleaned = clean_dataframe(df)
-    if output_csv:
-        cleaned.to_csv(output_csv, index=False)
-    if output_xlsx:
-        cleaned.to_excel(output_xlsx, index=False)
-    return cleaned
+def load_csv(file_path):
+    return pd.read_csv(file_path)
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument('--input', '-i', dest='input', help='Input CSV file path')
-    p.add_argument('--output', '-o', dest='output', default=None, help='Output CSV file path')
-    p.add_argument('--excel', dest='excel', default=None, help='Output Excel file path')
-    p.add_argument('--input-folder', dest='input_folder', default=None)
-    p.add_argument('--output-folder', dest='output_folder', default=None)
-    args = p.parse_args()
+def save_csv(df, output_file):
+    df.to_csv(output_file, index=False)
+    print(f"Saved: {output_file}")
 
-    if args.input:
-        inp = Path(args.input)
-        out_csv = args.output or str(inp.with_name(inp.stem + '_cleaned.csv'))
-        out_xlsx = args.excel or str(inp.with_name(inp.stem + '_cleaned.xlsx'))
-        cleaned = clean_file(inp, out_csv, out_xlsx)
-        print(f"Saved cleaned files:\n - {out_csv}\n - {out_xlsx}")
-        print(cleaned.head())
-    elif args.input_folder:
-        inp_folder = Path(args.input_folder)
-        out_folder = Path(args.output_folder or inp_folder / 'cleaned')
-        out_folder.mkdir(parents=True, exist_ok=True)
-        for f in inp_folder.glob('*.csv'):
-            out_csv = out_folder / f.name.replace('.csv', '_cleaned.csv')
-            out_xlsx = out_folder / f.name.replace('.csv', '_cleaned.xlsx')
-            clean_file(f, out_csv, out_xlsx)
-            print("Processed:", f.name)
-        print("Done. Cleaned files in:", out_folder)
+def filter_by_category(df, category_name):
+    category_name = category_name.strip().title()
+    return df[df['category'] == category_name]
+
+def price_alert(df, threshold, above=True):
+    if above:
+        alert_df = df[df['price'] > threshold]
     else:
-        p.print_help()
+        alert_df = df[df['price'] < threshold]
+    if not alert_df.empty:
+        print("⚠️ Price Alert! Products meeting criteria:")
+        print(alert_df[['product_name', 'price']])
+    return alert_df
 
-if __name__ == '__main__':
-    main()
+def process_file(file_path, output_folder, category=None, price_threshold=None, above=True):
+    df = load_csv(file_path)
+    df = clean_data(df)
+
+    base_name = os.path.splitext(os.path.basename(file_path))[0]
+
+    save_csv(df, os.path.join(output_folder, f"{base_name}_cleaned.csv"))
+
+    if category:
+        filtered_df = filter_by_category(df, category)
+        save_csv(filtered_df, os.path.join(output_folder, f"{base_name}_{category}_filtered.csv"))
+
+    if price_threshold is not None:
+        price_alert(df, price_threshold, above=above)
+
+def batch_process(input_folder, output_folder, category=None, price_threshold=None, above=True):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    for file in os.listdir(input_folder):
+        if file.endswith(".csv"):
+            process_file(
+                os.path.join(input_folder, file),
+                output_folder,
+                category=category,
+                price_threshold=price_threshold,
+                above=above
+            )
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print("Usage: python clean_data.py <input_folder> <output_folder> [category] [price_threshold] [above=True/False]")
+        sys.exit(1)
+
+    input_folder = sys.argv[1]
+    output_folder = sys.argv[2]
+    category = sys.argv[3] if len(sys.argv) > 3 else None
+    price_threshold = float(sys.argv[4]) if len(sys.argv) > 4 else None
+    above = sys.argv[5].lower() == "true" if len(sys.argv) > 5 else True
+
+    batch_process(input_folder, output_folder, category=category, price_threshold=price_threshold, above=above)
