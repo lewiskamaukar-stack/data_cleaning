@@ -1,0 +1,5 @@
+product_id,product_name,category,price,stock,launch_date
+Deluxe Widget,Gadgets,$1,299.5,10,2025-01-05
+mini-widget,Gadgets,1200,5.0,0,
+SUPER WIDGET,Gadgets,$999.9,0.0,0,
+ultra widget,Accessories,,2.0,20250201,
