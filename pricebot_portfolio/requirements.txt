@@ -1,0 +1,12 @@
+- requirements.txt for Price Comparison Bot
+
+requests
+beautifulsoup4
+pandas
+openpyxl
+python-dotenv
+pytest  
+
+
+smtplib
+email
